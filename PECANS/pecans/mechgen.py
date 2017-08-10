@@ -886,6 +886,9 @@ def _parse_kpp_species(spec_file):
                     else:
                            raise NotImplementedError('KPP action {} yet to be implmented'.format(spec_action.strip()))
             else:
+                if line == '#EQUATIONS {}':
+                    raise SpeciesDefError('Species and Equation Files in incorrect order')
+                else:
                 raise NotImplementedError('KPP Definition {} yet to be implmented'.format(line))
 
 def _parse_kpp_reactions(rxn_file):
