@@ -16,6 +16,7 @@ import argparse
 from glob import glob
 import os.path
 import re
+import pdb
 
 _mydir = os.path.abspath(os.path.realpath(os.path.dirname(__file__)))
 
@@ -26,6 +27,8 @@ pyx_indent = '    '
 temperature_variable = 'TEMP'
 ndens_air_variable = 'C_M'
 time_variable = 'HOUR'
+par_variable = 'PAR'
+height_variable = 'HEIGHT'
 rate_expr_include_dir = os.path.join(_mydir, 'Rates')
 c_math_fxns = ['exp', 'sqrt', 'log', 'log10', 'cos', 'abs']
 
@@ -166,6 +169,29 @@ class Reaction:
     """
     next_id = 0
 
+    def __init__(self, reactants, products, rate_fxn):
+        """
+        Create an instance of Reaction that contains the reactants, products, and rate constant
+        :param reactants: a list, tuple, or set of instances of ReactionSpecie representing the reactants
+        :param products: a list, tuple, or set of instances of ReactionSpecie representing the products
+        :param rate_fxn: a representation of the rate constant, either as a function or value
+        :return: instance of Reaction
+        """
+        if not isinstance(reactants, (list, tuple, set)):
+            raise TypeError('reactants must be an instance of list, tuple, or set')
+        elif any([not isinstance(reactant, ReactionSpecie) for reactant in reactants]):
+            raise TypeError('All elements of reactants must be instances of ReactionSpecie')
+        if not isinstance(products, (list, tuple, set)):
+            raise TypeError('products must be an instance of list, tuple, or set')
+        elif any([not isinstance(product, ReactionSpecie) for product in products]):
+            raise TypeError('All elements of products must be instances of ReactionSpecie')
+
+        self._reactants = self._make_specie_set(reactants)
+        self._products = self._make_specie_set(products)
+        self._rate_fxn = rate_fxn
+        self._id = self.__class__.next_id
+        self.__class__.next_id += 1
+
     @property
     def id(self):
         """
@@ -217,29 +243,6 @@ class Reaction:
             return self._rate_fxn.__str__()
         else:
             return self._rate_fxn
-
-    def __init__(self, reactants, products, rate_fxn):
-        """
-        Create an instance of Reaction that contains the reactants, products, and rate constant
-        :param reactants: a list, tuple, or set of instances of ReactionSpecie representing the reactants
-        :param products: a list, tuple, or set of instances of ReactionSpecie representing the products
-        :param rate_fxn: a representation of the rate constant, either as a function or value
-        :return: instance of Reaction
-        """
-        if not isinstance(reactants, (list, tuple, set)):
-            raise TypeError('reactants must be an instance of list, tuple, or set')
-        elif any([not isinstance(reactant, ReactionSpecie) for reactant in reactants]):
-            raise TypeError('All elements of reactants must be instances of ReactionSpecie')
-        if not isinstance(products, (list, tuple, set)):
-            raise TypeError('products must be an instance of list, tuple, or set')
-        elif any([not isinstance(product, ReactionSpecie) for product in products]):
-            raise TypeError('All elements of products must be instances of ReactionSpecie')
-
-        self._reactants = self._make_specie_set(reactants)
-        self._products = self._make_specie_set(products)
-        self._rate_fxn = rate_fxn
-        self._id = self.__class__.next_id
-        self.__class__.next_id += 1
 
     def get_reactant_specie(self, specie):
         """
@@ -303,11 +306,52 @@ class Reaction:
         return '<{}.{} at {:#x}: {}>'.format(__name__, self.__class__.__name__, id(self), self.__str__())
 
 
+class Emission(Reaction):
+    """ Creates a Reaction instance containging no reactants corresponding to Emission """
+
+    def __init__(self, product, rate_fxn):
+        Reaction.__init__(self, [], product, rate_fxn)
+
+    def __str__(self):
+        return 'Emission -> {} : {}'.format(
+            ' + '.join(['{}*{}'.format(s.coefficient, s.name) for s in self.products]),
+            self._rate_fxn
+        )
+
+
+class Depostion(Reaction):
+    """ Creates a Reaction instance containging no reactants corresponding to Emission """
+
+    def __init__(self, reactant, rate_fxn):
+        Reaction.__init__(self, reactant, [], rate_fxn)
+
+    def __str__(self):
+        return '{} -> Deposition : {}'.format(
+            ' + '.join(['{}*{}'.format(s.coefficient, s.name) for s in self.reactants]),
+            self._rate_fxn
+        )
+
+
 class Derivative:
     """
     Represents the derivative needed to calculate the change in a chemical specie
     """
     max_summands_per_line = 20
+
+    def __init__(self, specie):
+        """
+        Initialize an instance of Derivative that can be used to represent the change of a chemical
+        specie in a single timestep.
+        :param specie: The specie that the derivative is for; an instance of Specie
+        :return: an instance of Derivative
+        """
+        if not isinstance(specie, Specie):
+            raise TypeError('specie must be an instance of mechgen.Specie')
+
+        self._changed_specie = specie
+        self._input_species = set()
+        self._reactions = []
+        self._coefficients = []
 
     @property
     def changed_specie(self):
@@ -353,21 +397,6 @@ class Derivative:
         :return: a string that represents the function signature
         """
         return self._func_signature
-
-    def __init__(self, specie):
-        """
-        Initialize an instance of Derivative that can be used to represent the change of a chemical
-        specie in a single timestep.
-        :param specie: The specie that the derivative is for; an instance of Specie
-        :return: an instance of Derivative
-        """
-        if not isinstance(specie, Specie):
-            raise TypeError('specie must be an instance of mechgen.Specie')
-
-        self._changed_specie = specie
-        self._input_species = set()
-        self._reactions = []
-        self._coefficients = []
 
     def add_rxn_if_relevant(self, rxn):
         """
@@ -445,13 +474,19 @@ class Derivative:
 
             rxn = self.reactions[i]
             coeff = self.coefficients[i]
-            rxn_str = '{}*{}*{}'.format(
-                coeff, rxn.rate_str, '*'.join(
-                    ['conc_'+s.name if s.coefficient == 1.0 else 'conc_{}**{}'.format(
-                        s.name, s.coefficient
-                    ) for s in rxn.reactants]
+
+            if type(rxn) is Emission:
+                rxn_str = '{}*{}'.format(
+                    coeff, rxn.rate_str)
+            else:
+                rxn_str = '{}*{}*{}'.format(
+                    coeff, rxn.rate_str, '*'.join(
+                        ['conc_'+s.name if s.coefficient == 1.0 else 'conc_{}**{}'.format(
+                            s.name, s.coefficient
+                        ) for s in rxn.reactants]
+                    )
                 )
-            )
+
             lines[-1] += rxn_str
             if i < len(self.reactions) - 1 and (i+1) % Derivative.max_summands_per_line:
                 # There are only two cases where we do not want to add a "+" sign after each reaction's
@@ -598,25 +633,6 @@ class RateExpression:
         return call_name
 
 
-    """
-    @classmethod
-    def _cythonize_rate_expression(cls, rate_string):
-        function_def, function_body = rate_string.split(':')
-        m = re.search('\w+(?=\()', function_def)
-        if m is None:
-            raise RateDefError('Could not identify rate expression name for string:\n{}'.format(rate_string))
-        function_name = m.group()
-
-        m = re.search('(?<=\().+(?=\))')
-        if m is None:
-            raise RateDefError('Could not identify rate expression inputs for string:\n{}'.format(rate_string))
-        function_inputs = [s.strip() for s in m.group().split(',')]
-        for rinput in function_inputs:
-            if re.search('\W', rinput) is not None:
-                raise RateDefError('Invalid character in rate expression input "{}"'.format(rinput))
-    """
-
-
 def _get_args():
     """
     Get the command line arguments
@@ -627,6 +643,8 @@ def _get_args():
     parser.add_argument('--style', default='pecans', help='whether the input files are PECANS or KPP style')
     parser.add_argument('species_file', help='the file listing the species names')
     parser.add_argument('reactions_file', help='the file listing the chemical reactions and rate constants')
+    parser.add_argument('emissions_file', help='the file listing the emitted species and emission rates')
+    parser.add_argument('deposition_file', help='the file listing the deposites species and deposition velocities')
 
     args = parser.parse_args()
     return args
@@ -873,6 +891,105 @@ def _parse_kpp_reactions(rxn_file):
 
     return reactions
 
+def _parse_emissions(emis_file):
+
+    emissions = []
+    lineno = 0
+
+    with open(emis_file, 'r') as f:
+        for line in f:
+            lineno += 1
+            line = re.sub('\{(.*?)\}','', line) # remove comments contained within {}
+
+            if line.strip() == '#EMISSIONS':
+                pass
+
+            elif line.strip() == '':
+                pass
+
+            elif line[0] != '#':
+
+                try:
+                    i_rate = line.index('=')
+
+                except ValueError:
+                    raise ReactionDefError('No rate separator, =, found on line {} of {}'.format(lineno, emis_file))
+
+                prod_string = line[:i_rate].strip()
+                rate_str = re.sub('\;','',line[i_rate+1:].strip())
+
+                try:
+                    products = [spec for spec in _iter_react_prod(prod_string)]
+
+                except ReactionDefError as err:
+                    raise ReactionDefError('Problem parsing reactants of line {} of {}: {}'.format(lineno, emis_file, err.args[0])) from None
+
+
+                def self_evaluating(expr):
+                    # For use recognizing if an expressions is in terms of known constants as mathematical
+                    # expressions and therefore can be treated as if it were a simple number
+                    C_M, TEMP = 2.5e19, 300
+                    try:
+                        float(eval(expr))
+                        return True
+                    except NameError:
+                        return False
+
+                if '*' in rate_str:
+                    coef, rate_str = rate_str.split('*')
+                else:
+                    # If it's just a number that can be recognized as a float, leave it how it is
+                        if not self_evaluating(rate_str):
+                            try:
+                                RateExpression.mark_rate_as_needed(rate_str)
+                            except RateDefError as err:
+                                raise ReactionDefError('Problem parsing reactants/products of line {} of {}: {}'
+                                                       .format(lineno, rxn_file, err.args[0])) from None
+
+                emissions.append(Emission(products, rate_str))
+
+            else:
+                raise NotImplementedError('Unexpected Argument on line {}'.format(line))
+
+    return emissions
+
+def _parse_depostion(dep_file):
+
+    deposition = []
+    lineno = 0
+    with open(dep_file, 'r') as f:
+        for line in f:
+
+            lineno += 1
+            line = re.sub('\{(.*?)\}','', line) # remove comments contained within {}
+
+            if line.strip() == '#DEPOSITION':
+                pass
+            elif line.strip() == '':
+                pass
+            elif line[0] != '#':
+                try:
+                    i_rate = line.index('=')
+
+                except ValueError:
+                    raise ReactionDefError('No rate separator, =, found on line {} of {}'.format(lineno, dep_file))
+
+                react_str = line[:i_rate].strip()
+                rate_str = re.sub('\;','',line[i_rate+1:].strip())
+
+                try:
+                    reactants = [spec for spec in _iter_react_prod(react_str)]
+
+                except ReactionDefError as err:
+                    raise ReactionDefError('Problem parsing reactants of line {} of {}: {}'.format(lineno, deposition, err.args[0])) from None
+
+                deposition.append(Depostion(reactants, rate_str))
+
+            else:
+                raise NotImplementedError('Unexpected Argument on line {}'.format(line))
+
+    return deposition
+
 def _iter_react_prod(line):
     """
     Iterates over reactants OR products, not both. Assumes that they are split by + signs
@@ -942,7 +1059,7 @@ def _read_rate_def_files(additional_file):
             # Add the last rate expression in the file
             RateExpression(''.join(curr_rate_expr), rfile, def_line_num)
 
-def generate_pecans_mechanism(species_file, reactions_file, extra_rate_def_file=None):
+def generate_pecans_mechanism(species_file, reactions_file,  emissions_file, deposition_file, extra_rate_def_file=None):
     """
     Main function that generates a mechanism file for the PECANS style inputs. Any other
     input file style must have an equivalent primary function that reads rate expression
@@ -957,7 +1074,7 @@ def generate_pecans_mechanism(species_file, reactions_file, extra_rate_def_file=
     _parse_pecan_species(species_file)
     return _parse_pecan_reactions(reactions_file)
 
-def generate_kpp_mechanism(species_file, reactions_file, extra_rate_def_file=None):
+def generate_kpp_mechanism(species_file, reactions_file, emissions_file, deposition_file, extra_rate_def_file=None):
     """
     Main function that generates a mechanism file for the PECANS style inputs. Any other
     input file style must have an equivalent primary function that reads rate expression
@@ -968,11 +1085,13 @@ def generate_kpp_mechanism(species_file, reactions_file, extra_rate_def_file=Non
      that define rate constant expressions.
     :return:
     """
-    print('Building p')
-
+    print('Writing Files... ')
     _read_rate_def_files(extra_rate_def_file)
     _parse_kpp_species(species_file)
-    return _parse_kpp_reactions(reactions_file)
+    reactions =  _parse_kpp_reactions(reactions_file)
+    emissions = _parse_emissions(emissions_file)
+    depostion = _parse_depostion(deposition_file)
+    return emissions + depostion + reactions
 
 def generate_chemderiv_file(reactions):
     """
@@ -1016,8 +1135,8 @@ def _generate_interface_function(derivatives):
     lines = []
     dict_str = []
 
-    lines.append('def chem_solver(double dt, double {}, double {}, double {}, {}):'.
-        format(time_variable, temperature_variable, ndens_air_variable,
+    lines.append('def chem_solver(double dt, double {}, double {}, double {}, double {}, double {}, {}):'.
+        format(time_variable, temperature_variable, ndens_air_variable, par_variable, height_variable,
         ', '.join(['double conc_{}'.format(s.name) for s in Specie.instances]
                   )))
 
@@ -1034,14 +1153,14 @@ def _generate_interface_function(derivatives):
 
 style_parse_fxn_dict = {'pecans':generate_pecans_mechanism, 'kpp':generate_kpp_mechanism}
 
-def generate_mechanism(mechanism_style, species_file, reactions_file, additional_rates_file=None):
+def generate_mechanism(mechanism_style, species_file, reactions_file, emissions_file, deposition_file, extra_rate_def_file=None):
     try:
         build_fxn = style_parse_fxn_dict[mechanism_style]
     except KeyError:
         raise NotImplementedError('The mechgen.style_parse_fxn_dict does not have a parsing function listed for style '
                                   '{}'.format(mechanism_style))
 
-    reactions = build_fxn(species_file, reactions_file, additional_rates_file)
+    reactions = build_fxn(species_file, reactions_file, emissions_file, deposition_file, extra_rate_def_file)
     generate_chemderiv_file(reactions=reactions)
 
 def _main():
@@ -1051,7 +1170,8 @@ def _main():
     """
     args = _get_args()
     generate_mechanism(mechanism_style=args.style.lower(), species_file=args.species_file,
-                       reactions_file=args.reactions_file)
+                       reactions_file=args.reactions_file, emissions_file=args.emissions_file,
+                       deposition_file=args.deposition_file)
 
 if __name__ == '__main__':
     _main()

@@ -1,0 +1,58 @@
+
+cdef BIOT(double BER, double b, double TEMP, int num_carbons, double HEIGHT):
+  # Temperature Dependant Emissions Model based on the
+  # Parametrization given in Schade and Goldstein, 2001
+  # INPUTS:
+        # BER = basal emission rate at 30 degrees C
+        # b = species-specific temperature dependance coefficent
+        # TEMP = temperature (K)
+        # num_carbons = number of carbon atoms in species (int)
+        # height (cm)
+
+  cdef double E
+
+  E = BER * exp(b*(TEMP-303)) # mg C m−2 h−1
+  E = E * 1/3600 * 1/1e6 * 1/HEIGHT # mg C cm−3 s−1
+  return E * 1000 * (6.022e23 * 1/(12.01)) * num_carbons # molec cm−3 s−1
+
+
+
+cdef BIOTL(double BER, double PAR, double TEMP, int num_carbons, double HEIGHT):
+  # Temperature and Light Dependant Emissions Model based on the
+  # Parametrization given in Schade and Goldstein, 2001
+  # INPUTS:
+      # BER = basal emission rate at 30 degrees C and PAR of 1000 µmolm**-2s**-1
+      # PAR = photosynthetically active radiation
+      # TEMP = Temperature (K)
+      # num_carbons = number of carbon atoms in species (int)
+      # height (cm)
+
+
+  # gammaL = light activity emissions factor
+  # gammaT = temperature emissions factor
+
+  cdef double alpha
+  cdef double c
+  cdef double Eopt
+  cdef double Topt
+  cdef double CT1
+  cdef double CT2
+  cdef double gammaL
+  cdef double gammaT
+  cdef double R
+  cdef double E
+
+  R = 0.00831
+  alpha = 0.0011
+  c = 1.37
+  Eopt = 1.45 # Eopt : maximum normalized emission capacity
+  Topt = 312 # Temp at which Eopt occurs
+  CT1 = 131 # energy of deactivation
+  CT2 = 154 # energy of activation
+
+  gammaL = alpha * c * (PAR/((1 + alpha ** 2 + PAR ** 2) ** 0.5))
+  gammaT = Eopt * (CT2 * exp((1/Topt - 1/TEMP) * CT1/R))/((CT2 - CT1) * (1 - exp((1/Topt - 1/TEMP) * CT2/R)))
+
+  E = BER * gammaL * gammaT # mg C m−2 h−1
+  E = E * 1/3600 * 1/1e6 * 1/HEIGHT # mg C cm−3 s−1
+  return E * 1000 * (6.022e23 * 1/(12.01)) * num_carbons # molec cm−3 s−1

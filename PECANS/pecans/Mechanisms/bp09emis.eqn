@@ -1,0 +1,15 @@
+#EMISSIONS {units : mg C m−2 h−1}
+{Emissions for Bearpex 2009 from Park et. al 2004 using the parametrization from Schade and Goldstein 2001}
+{Emissions for all species greater than than 0.01 mg C m−2 h−1, Park et. al 2014}
+{LIM, ACT production ratios from Bouvier-Brown et al (using Bearpex 2007 data) : beta-pinene (43%) + 3-carene (29%) + alpha-pinene (15%) + camphene (1%) -> 88% ACT (yet to correct for variation in lifetimes)}
+{MBO = 0.9 * BIOTL(3.8, PAR, TEMP, 5, HEIGHT) ; filler coef}
+ MOH = BIOTL(0.71, PAR, TEMP, 1, HEIGHT) ; 
+ ISO = 0.1 * BIOTL(3.8, PAR, TEMP, 5, HEIGHT) ; {filler coef}
+ ACT = BIOT(0.24, 0.09, TEMP, 3, HEIGHT) ; 
+ LIM = 0.2 * BIOT(0.6, 0.12, TEMP, 10, HEIGHT) ; 
+ API = 0.8 * BIOT(0.6, 0.12, TEMP, 10, HEIGHT) ; 
+ ACD = BIOT(0.13, 0.07, TEMP, 2, HEIGHT) ;
+ MCT = BIOT(0.08, 0.2, TEMP, 7, HEIGHT) ; 
+
+
+
